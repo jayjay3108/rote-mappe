@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.1] - 2026-05-10
+
+### Changed
+- **Refactoring:** Wizard-Komponenten in `WizardSteps.tsx` wurden final aufgeräumt und nutzen nun konsequent die ausgelagerten Dateien aus dem `steps`-Ordner.
+- **Security & Privacy:** Vollständige Code-Analyse (Privacy Check) durchgeführt und fehlende Abhängigkeiten für den Build-Prozess (`npm install`) behoben. Es ist verifiziert, dass die App zu 100 % lokal arbeitet und keinerlei externe API- oder Tracking-Aufrufe tätigt.
+
+### Fixed
+- **UI:** Überlappende Tailwind Dark Mode Klassen korrigiert (#15 von [@LucaNerlich]).
+
 ## [1.3.0] - 2026-04-28
 
 ### Added
