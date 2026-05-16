@@ -2,12 +2,6 @@ services:
   notfallakte-app:
     build: .
     restart: unless-stopped
-    # Internal port the container listens on (nginx-unprivileged).
-    # (Reverse) Proxy use this to route traffic inside the Docker network.
-    expose:
-      - "8080"
-    ports:
-      - "${HOST_PORT:-8080}:8080"
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8080/ || exit 1"]
       interval: 15s
