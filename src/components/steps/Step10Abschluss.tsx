@@ -1,12 +1,20 @@
-import { useState, useEffect, useCallback } from 'react';
-import { useFormContext } from '../../FormContext';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useFormContext } from 'react-hook-form';
+import { useFormContext as useAppFormContext } from '../../FormContext';
 import { Select } from '../../Select';
-import { Info, ShieldCheck, Download, Loader2, CheckCircle } from 'lucide-react';
+import { Info, ShieldCheck, Download, Loader2, CheckCircle, Lock } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { FormSchemaType } from '../../schema';
+import { ToastContainer } from '../Toast';
+import { useToast } from '../../hooks/useToast';
+import { useDialogFocusTrap } from '../../hooks/useDialogFocusTrap';
 
 export function Step10Abschluss() {
   const { t } = useTranslation();
-  const { formData, downloadBackup, isDownloading } = useFormContext();
+  const { watch, getValues } = useFormContext<FormSchemaType>();
+  const { downloadBackup, isDownloading } = useAppFormContext();
+  const { toasts, addToast, dismissToast } = useToast();
+
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
   const [pdfTemplate, setPdfTemplate] = useState('rot');
   const [includePlaceholders, setIncludePlaceholders] = useState(true);
@@ -15,33 +23,93 @@ export function Step10Abschluss() {
 
   const handleGeneratePreview = useCallback(async () => {
     try {
+      const currentData = getValues();
       const { generatePDFAsync } = await import('../../utils/pdfWorkerWrapper');
-      const blob = await generatePDFAsync(formData, pdfTemplate, includePlaceholders, includeWarnings);
+      const blob = await generatePDFAsync(currentData as unknown as import('../../types').FormData, pdfTemplate, includePlaceholders, includeWarnings);
       const url = URL.createObjectURL(blob);
       setPdfPreviewUrl(prevUrl => {
         if (prevUrl) URL.revokeObjectURL(prevUrl);
         return url;
       });
-    } catch (error) {
-      console.error('Error generating PDF preview:', error);
+    } catch {
+      addToast(t('step10.previewError', { defaultValue: 'Die PDF-Vorschau konnte nicht erstellt werden.' }), 'error');
     }
-  }, [formData, pdfTemplate, includePlaceholders, includeWarnings]);
+  }, [addToast, getValues, includePlaceholders, includeWarnings, pdfTemplate, t]);
 
+  // Generate preview on mount and when PDF settings change
   useEffect(() => {
     handleGeneratePreview();
   }, [handleGeneratePreview]);
 
-  const handleDownload = async () => {
+  // Debounced regeneration when form data changes
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => {
+    const subscription = watch(() => {
+      clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(handleGeneratePreview, 1000);
+    });
+    return () => {
+      subscription.unsubscribe();
+      clearTimeout(debounceRef.current);
+    };
+  }, [watch, handleGeneratePreview]);
+
+  const [showBackupModal, setShowBackupModal] = useState(false);
+  const [pwd1, setPwd1] = useState('');
+  const [pwd2, setPwd2] = useState('');
+  const [error, setError] = useState('');
+  const [noPassword, setNoPassword] = useState(false);
+  const backupDialogRef = useDialogFocusTrap(showBackupModal);
+
+  const handleDownloadClick = () => {
     setDownloadSuccess(false);
-    const success = await downloadBackup(pdfTemplate, includePlaceholders, includeWarnings);
+    setPwd1('');
+    setPwd2('');
+    setError('');
+    setNoPassword(false);
+    setShowBackupModal(true);
+  };
+
+  useEffect(() => {
+    if (!showBackupModal) return;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowBackupModal(false);
+    };
+    window.addEventListener('keydown', handleEscape);
+    return () => {
+      window.removeEventListener('keydown', handleEscape);
+      previouslyFocused?.focus();
+    };
+  }, [showBackupModal]);
+
+  const handleBackupConfirm = async () => {
+    let finalPwd = undefined;
+    if (!noPassword) {
+      if (!pwd1) {
+        setError(t('sidebar.backup.enterPassword', { defaultValue: 'Bitte vergib ein Passwort.' }));
+        return;
+      }
+      if (pwd1 !== pwd2) {
+        setError(t('sidebar.backup.passwordMismatch', { defaultValue: 'Die Passwörter stimmen nicht überein.' }));
+        return;
+      }
+      finalPwd = pwd1;
+    }
+
+    setShowBackupModal(false);
+    const success = await downloadBackup(pdfTemplate, includePlaceholders, includeWarnings, finalPwd);
     if (success) {
       setDownloadSuccess(true);
       setTimeout(() => setDownloadSuccess(false), 3000);
+    } else {
+      addToast(t('sidebar.backup.error', { defaultValue: 'Fehler bei der Erstellung der ZIP-Datei.' }));
     }
   };
 
   return (
     <div className="animate-in fade-in zoom-in-95 duration-500 flex-1 flex flex-col min-h-150">
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
       <div className="mb-8 flex flex-col md:flex-row md:justify-between md:items-end gap-6">
         <div>
           <h2 className="text-3xl font-serif text-slate-900 dark:text-slate-100 mb-3">{t('wizardSteps.step10.title')}</h2>
@@ -60,7 +128,7 @@ export function Step10Abschluss() {
             </label>
           </div>
         </div>
-        <button onClick={handleDownload} disabled={isDownloading || downloadSuccess} className={`w-full md:w-auto text-white px-8 py-3 rounded-xl font-semibold transition-all shadow-lg flex items-center justify-center gap-3 ${isDownloading ? 'bg-indigo-400 cursor-not-allowed' : downloadSuccess ? 'bg-emerald-500 hover:bg-emerald-600 cursor-default' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
+        <button type="button" onClick={handleDownloadClick} disabled={isDownloading || downloadSuccess} className={`w-full md:w-auto text-white px-8 py-3 rounded-xl font-semibold transition-all shadow-lg flex items-center justify-center gap-3 ${isDownloading ? 'bg-indigo-400 cursor-not-allowed' : downloadSuccess ? 'bg-emerald-500 hover:bg-emerald-600 cursor-default' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
           {isDownloading ? (
             <><Loader2 size={20} className="animate-spin" /> {t('wizardSteps.step10.downloading')}</>
           ) : downloadSuccess ? (
@@ -90,6 +158,83 @@ export function Step10Abschluss() {
           </div>
         )}
       </div>
+
+      {showBackupModal && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in" role="presentation">
+          <div ref={backupDialogRef} className="bg-white dark:bg-slate-800 rounded-3xl p-8 max-w-md w-full shadow-2xl border border-indigo-100 dark:border-indigo-900/50 animate-in zoom-in-95" role="dialog" aria-modal="true" aria-labelledby="completion-backup-title" tabIndex={-1}>
+            <div className="flex flex-col items-center text-center">
+              <div className="w-16 h-16 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-full flex items-center justify-center mb-6">
+                <Lock size={32} />
+              </div>
+              <h3 id="completion-backup-title" className="text-xl font-semibold text-slate-900 dark:text-slate-100 mb-3">{t('sidebar.backup.modalTitle', { defaultValue: 'Backup Sicherheit' })}</h3>
+              <p className="text-slate-600 dark:text-slate-400 mb-6 leading-relaxed">
+                {t('sidebar.backup.requireEncryption', { defaultValue: 'Bitte vergib ein Passwort, um dein Backup (die JSON-Datei) zu verschlüsseln. Dies wird dringend empfohlen.' })}
+              </p>
+
+              <div className="flex flex-col w-full gap-4">
+                  <label className="flex items-center justify-start gap-3 p-3 border border-slate-200 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-800/50 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={noPassword}
+                      onChange={(e) => {
+                        setNoPassword(e.target.checked);
+                        if (e.target.checked) {
+                          setPwd1('');
+                          setPwd2('');
+                          setError('');
+                        }
+                      }}
+                      className="w-5 h-5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                    />
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                      {t('sidebar.backup.noPassword', { defaultValue: 'Ohne Passwort fortfahren (Unsicher)' })}
+                    </span>
+                  </label>
+
+                  {!noPassword && (
+                    <div className="flex flex-col gap-4 animate-in slide-in-from-top-2 duration-300">
+                      <div>
+                        <label htmlFor="completion-backup-password" className="sr-only">{t('sidebar.backup.enterPasswordLabel', { defaultValue: 'Passwort' })}</label>
+                        <input
+                          type="password"
+                          id="completion-backup-password"
+                          placeholder={t('sidebar.backup.enterPasswordLabel', { defaultValue: 'Passwort' })}
+                          value={pwd1}
+                          onChange={(e) => setPwd1(e.target.value)}
+                          className="w-full px-4 py-3 border border-slate-200 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-900/50 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                          autoFocus
+                        />
+                      </div>
+                      <div>
+                        <label htmlFor="completion-backup-password-confirm" className="sr-only">{t('sidebar.backup.confirmPasswordLabel', { defaultValue: 'Passwort wiederholen' })}</label>
+                        <input
+                          type="password"
+                          id="completion-backup-password-confirm"
+                          placeholder={t('sidebar.backup.confirmPasswordLabel', { defaultValue: 'Passwort wiederholen' })}
+                          value={pwd2}
+                          onChange={(e) => setPwd2(e.target.value)}
+                          className="w-full px-4 py-3 border border-slate-200 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-900/50 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                          onKeyDown={(e) => e.key === 'Enter' && handleBackupConfirm()}
+                        />
+                      </div>
+                    </div>
+                  )}
+                  
+                  {error && !noPassword && <p className="text-red-500 text-sm text-left">{error}</p>}
+                  
+                  <div className="flex flex-col w-full gap-2 mt-2">
+                    <button type="button" onClick={() => handleBackupConfirm()} className="w-full py-3.5 bg-indigo-600 text-white font-medium rounded-xl hover:bg-indigo-700 shadow-md shadow-indigo-600/20 transition-all cursor-pointer">
+                      {t('sidebar.backup.startDownload', { defaultValue: 'Download starten' })}
+                    </button>
+                    <button type="button" onClick={() => setShowBackupModal(false)} className="w-full py-2 text-sm text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 transition-colors cursor-pointer">
+                      {t('common.cancel', { defaultValue: 'Abbrechen' })}
+                    </button>
+                  </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

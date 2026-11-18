@@ -17,7 +17,12 @@ export const addBaseSection = (builder: PdfBuilder) => {
   }
 
   builder.drawKeyValue(i18n.t('pdf.baseSection.address'), `${builder.data.street} ${builder.data.houseNumber}, ${builder.data.zipCode} ${builder.data.city}`);
-  builder.drawKeyValue(i18n.t('pdf.baseSection.maritalStatus'), builder.data.maritalStatus);
+  const maritalStatusLabels: Record<string, string> = {
+    ledig: i18n.t('wizardSteps.step1.statusSingle'),
+    verheiratet: i18n.t('wizardSteps.step1.statusMarried'),
+    geschieden: i18n.t('wizardSteps.step1.statusDivorced')
+  };
+  builder.drawKeyValue(i18n.t('pdf.baseSection.maritalStatus'), maritalStatusLabels[builder.data.maritalStatus] || builder.data.maritalStatus);
   if (builder.data.marriageDate) builder.drawKeyValue(i18n.t('pdf.baseSection.marriageDate'), formatDate(builder.data.marriageDate));
   if (builder.data.divorceDate) builder.drawKeyValue(i18n.t('pdf.baseSection.divorceDate'), formatDate(builder.data.divorceDate));
   if (builder.data.childrenCount) builder.drawKeyValue(i18n.t('pdf.baseSection.childrenCount'), builder.data.childrenCount);
@@ -44,6 +49,46 @@ export const addBaseSection = (builder: PdfBuilder) => {
     builder.drawLineText(i18n.t('pdf.baseSection.contacts'), true, 12);
     const headers = (i18n.t('pdf.baseSection.contactsHeaders', { returnObjects: true }) as string[]);
     const rows = builder.data.contacts.map(c => [c.type, c.name, c.phone, c.email]);
+    builder.drawTable(headers, rows);
+    builder.currentY -= 10;
+  }
+
+  if (builder.data.employment?.status) {
+    builder.drawLineText(i18n.t('pdf.baseSection.employmentTitle'), true, 12);
+    const employmentStatusLabels: Record<string, string> = {
+      Angestellter: i18n.t('wizardSteps.step1.statusEmployee'),
+      Selbstständiger: i18n.t('wizardSteps.step1.statusSelfEmployed'),
+      Employee: i18n.t('wizardSteps.step1.statusEmployee'),
+      'Self-employed': i18n.t('wizardSteps.step1.statusSelfEmployed')
+    };
+    builder.drawKeyValue(i18n.t('pdf.baseSection.employmentStatus'), employmentStatusLabels[builder.data.employment.status] || builder.data.employment.status);
+    if (builder.data.employment.companyName) builder.drawKeyValue(i18n.t('pdf.baseSection.employerName'), builder.data.employment.companyName);
+    
+    const addressParts = [];
+    if (builder.data.employment.street) addressParts.push(builder.data.employment.street);
+    if (builder.data.employment.zipCode || builder.data.employment.city) {
+      addressParts.push(`${builder.data.employment.zipCode} ${builder.data.employment.city}`.trim());
+    }
+    if (addressParts.length > 0) builder.drawKeyValue(i18n.t('pdf.baseSection.employerAddress'), addressParts.join(', '));
+    
+    if (builder.data.employment.position) builder.drawKeyValue(i18n.t('pdf.baseSection.employmentPosition'), builder.data.employment.position);
+    if (builder.data.employment.employeeId) builder.drawKeyValue(i18n.t('pdf.baseSection.employeeId'), builder.data.employment.employeeId);
+    if (builder.data.employment.workEmail) builder.drawKeyValue(i18n.t('pdf.baseSection.workEmail'), builder.data.employment.workEmail);
+    builder.currentY -= 5;
+    
+    if (builder.data.employment.emergencyContacts && builder.data.employment.emergencyContacts.length > 0) {
+      builder.drawLineText(i18n.t('pdf.baseSection.emergencyContactsTitle'), true, 10);
+      const headers = (i18n.t('pdf.baseSection.contactsHeaders', { returnObjects: true }) as string[]);
+      const rows = builder.data.employment.emergencyContacts.map(c => [c.type, c.name, c.phone, c.email]);
+      builder.drawTable(headers, rows);
+    }
+    builder.currentY -= 10;
+  }
+
+  if (builder.data.doNotNotifyContacts && builder.data.doNotNotifyContacts.length > 0) {
+    builder.drawLineText(i18n.t('pdf.baseSection.doNotNotifyTitle'), true, 12);
+    const headers = (i18n.t('pdf.baseSection.contactsHeaders', { returnObjects: true }) as string[]);
+    const rows = builder.data.doNotNotifyContacts.map(c => [c.type, c.name, c.phone, c.email]);
     builder.drawTable(headers, rows);
   }
 };

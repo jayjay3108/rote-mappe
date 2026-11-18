@@ -1,14 +1,39 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense, lazy, useRef } from 'react';
+import { Path } from 'react-hook-form';
 import { Sidebar } from './Sidebar';
-import { ArrowRight, ArrowLeft, AlertTriangle, Menu, ShieldCheck } from 'lucide-react';
+import { ArrowRight, ArrowLeft, AlertTriangle, Menu, ShieldCheck, Loader2 } from 'lucide-react';
 import { FormProvider, useFormContext } from '../FormContext';
 import { useTranslation } from 'react-i18next';
-import {
-  Step1Basisdaten, Step2MedizinischeDaten, Step3Finanzen, Step4Vertraege,
-  Step5DigitaleIdentitaet, Step6Dokumente, Step7Vollmachten, Step8Hinweise,
-  Step9EigeneKapitel, Step10Abschluss
-} from './WizardSteps';
+const Step1Basisdaten = lazy(() => import('./steps/Step1Basisdaten').then(m => ({ default: m.Step1Basisdaten })));
+const Step2MedizinischeDaten = lazy(() => import('./steps/Step2MedizinischeDaten').then(m => ({ default: m.Step2MedizinischeDaten })));
+const Step3Finanzen = lazy(() => import('./steps/Step3Finanzen').then(m => ({ default: m.Step3Finanzen })));
+const Step4Vertraege = lazy(() => import('./steps/Step4Vertraege').then(m => ({ default: m.Step4Vertraege })));
+const Step5DigitaleIdentitaet = lazy(() => import('./steps/Step5DigitaleIdentitaet').then(m => ({ default: m.Step5DigitaleIdentitaet })));
+const Step6Dokumente = lazy(() => import('./steps/Step6Dokumente').then(m => ({ default: m.Step6Dokumente })));
+const Step7Vollmachten = lazy(() => import('./steps/Step7Vollmachten').then(m => ({ default: m.Step7Vollmachten })));
+const Step8Hinweise = lazy(() => import('./steps/Step8Hinweise').then(m => ({ default: m.Step8Hinweise })));
+const Step9EigeneKapitel = lazy(() => import('./steps/Step9EigeneKapitel').then(m => ({ default: m.Step9EigeneKapitel })));
+const Step10Abschluss = lazy(() => import('./steps/Step10Abschluss').then(m => ({ default: m.Step10Abschluss })));
 import { ThemeToggle } from './ThemeToggle';
+import { useDialogFocusTrap } from '../hooks/useDialogFocusTrap';
+import { fieldsForStep } from './wizardFields';
+import { FormSchemaType } from '../schema';
+
+function WizardLoading() {
+  const { t } = useTranslation();
+
+  return (
+    <div
+      className="flex h-full min-h-32 items-center justify-center gap-3 p-12 text-slate-500 dark:text-slate-400"
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
+    >
+      <Loader2 size={24} className="animate-spin" aria-hidden="true" />
+      <span>{t('wizard.loading')}</span>
+    </div>
+  );
+}
 
 export function Wizard() {
   return (
@@ -21,53 +46,57 @@ export function Wizard() {
 function WizardContent() {
   const { t } = useTranslation();
   const [step, setStep] = useState(1);
-  const { formData, setErrors } = useFormContext();
+  const { methods, errors } = useFormContext();
   const [showWarningModal, setShowWarningModal] = useState(false);
   const [nextStepTarget, setNextStepTarget] = useState(1);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-
-  useEffect(() => {
-    validateCurrentStep(step);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [formData, step]);
+  const warningDialogRef = useDialogFocusTrap(showWarningModal);
+  const errorSummaryRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     window.scrollTo(0, 0);
   }, [step]);
 
-  const validateCurrentStep = (currentStep: number) => {
-    const errs: Record<string, string> = {};
-    const isAlpha = (val: string) => /^[a-zA-ZäöüÄÖÜß\s-]*$/.test(val);
-    const isNumeric = (val: string) => /^\d*$/.test(val);
+  const stepErrors = Object.entries(errors).filter(([path]) => {
+    const fields = fieldsForStep[step] ?? [];
+    return fields.some(field => path === field || path.startsWith(`${field}.`));
+  });
 
-    if (currentStep === 1) {
-      if (!formData.firstName) {
-        errs.firstName = 'Vorname ist ein Pflichtfeld.';
-      } else if (!isAlpha(formData.firstName)) {
-        errs.firstName = 'Darf nur Buchstaben enthalten.';
-      }
-      if (!formData.lastName) {
-        errs.lastName = 'Nachname ist ein Pflichtfeld.';
-      } else if (!isAlpha(formData.lastName)) {
-        errs.lastName = 'Darf nur Buchstaben enthalten.';
-      }
-      if (formData.middleName && !isAlpha(formData.middleName)) errs.middleName = 'Darf nur Buchstaben enthalten.';
-      if (formData.zipCode && !isNumeric(formData.zipCode)) errs.zipCode = 'Darf nur Zahlen enthalten.';
-      if (formData.childrenCount && !isNumeric(formData.childrenCount)) errs.childrenCount = 'Darf nur Zahlen enthalten.';
+  useEffect(() => {
+    if (stepErrors.length > 0) {
+      errorSummaryRef.current?.focus();
     }
+  }, [step, stepErrors.length]);
 
-    setErrors(errs);
-    return errs;
-  };
+  useEffect(() => {
+    if (!showWarningModal) return;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowWarningModal(false);
+    };
+    window.addEventListener('keydown', handleEscape);
+    return () => {
+      window.removeEventListener('keydown', handleEscape);
+      previouslyFocused?.focus();
+    };
+  }, [showWarningModal]);
 
-  const handleNextClick = (targetStep: number) => {
-    const currentErrs = validateCurrentStep(step);
-    if (Object.keys(currentErrs).length > 0 && targetStep > step) {
-      setNextStepTarget(targetStep);
-      setShowWarningModal(true);
-    } else {
-      setStep(targetStep);
+  const handleNextClick = async (targetStep: number) => {
+    if (targetStep > step) {
+      const fieldsToValidate = fieldsForStep[step] ?? [];
+      let isValid = true;
+      if (fieldsToValidate.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        isValid = await methods.trigger(fieldsToValidate as any);
+      }
+      if (!isValid) {
+        setNextStepTarget(targetStep);
+        setShowWarningModal(true);
+        return;
+      }
     }
+    setStep(targetStep);
+    window.scrollTo(0, 0);
   };
 
   const renderStep = () => {
@@ -108,6 +137,8 @@ function WizardContent() {
           <div className="flex items-center gap-3">
             <ThemeToggle />
             <button
+              type="button"
+              aria-label={t('wizard.openMenu', 'Menü öffnen')}
               onClick={() => setIsSidebarOpen(true)}
               className="p-2 -mr-2 text-indigo-600 dark:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
             >
@@ -117,56 +148,95 @@ function WizardContent() {
         </header>
 
         <main className="p-4 md:p-8 lg:p-12 max-w-360 mx-auto w-full h-full flex-1">
-          <div className="bg-white dark:bg-slate-800 rounded-3xl p-5 md:p-8 shadow-sm border border-slate-200 dark:border-slate-700 min-h-[calc(100vh-8rem)] flex flex-col">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleNextClick(Math.min(10, step + 1));
+            }}
+            noValidate
+            className="wizard-step-container"
+          >
+            <div className="bg-white dark:bg-slate-800 rounded-3xl p-5 md:p-8 shadow-sm border border-slate-200 dark:border-slate-700 min-h-[calc(100vh-8rem)] flex flex-col">
 
-            <div className="flex-1">
-              {renderStep()}
-            </div>
+              <div className="flex-1">
+                {stepErrors.length > 0 && (
+                  <div
+                    ref={errorSummaryRef}
+                    tabIndex={-1}
+                    role="alert"
+                    aria-labelledby="wizard-error-summary-title"
+                    className="mb-6 rounded-xl border border-red-200 bg-red-50 p-4 text-red-900 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-100"
+                  >
+                    <h2 id="wizard-error-summary-title" className="font-semibold">
+                      {t('wizard.errorSummaryTitle', { count: stepErrors.length })}
+                    </h2>
+                    <ul className="mt-2 list-disc pl-5 text-sm">
+                      {stepErrors.map(([path, message]) => (
+                        <li key={path}>
+                          <button
+                            type="button"
+                            className="underline underline-offset-2 cursor-pointer"
+                            onClick={() => methods.setFocus(path as Path<FormSchemaType>)}
+                          >
+                            {message}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                <Suspense fallback={<WizardLoading />}>
+                  {renderStep()}
+                </Suspense>
+              </div>
 
-            <div className="mt-10 pt-6 border-t border-slate-100 dark:border-slate-700 flex justify-between items-center">
-              <button
-                onClick={() => handleNextClick(Math.max(1, step - 1))}
-                disabled={step === 1}
-                className={`flex items-center gap-2 px-6 py-3 rounded-xl font-medium transition-colors
-                  ${step === 1 ? 'text-slate-300 dark:text-slate-600 cursor-not-allowed' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-600 cursor-pointer'}`}
-              >
-                <ArrowLeft size={18} />
-                {t('wizard.back')}
-              </button>
-
-              {step < 10 ? (
+              <div className="mt-10 pt-6 border-t border-slate-100 dark:border-slate-700 flex justify-between items-center">
                 <button
-                  onClick={() => handleNextClick(Math.min(10, step + 1))}
-                  className="flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-xl font-medium hover:bg-indigo-700 transition-colors shadow-md shadow-indigo-600/10 dark:shadow-none cursor-pointer"
+                  type="button"
+                  onClick={() => handleNextClick(Math.max(1, step - 1))}
+                  disabled={step === 1}
+                  className={`flex items-center gap-2 px-6 py-3 rounded-xl font-medium transition-colors
+                    ${step === 1 ? 'text-slate-300 dark:text-slate-600 cursor-not-allowed' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-600 cursor-pointer'}`}
                 >
-                  {t('wizard.next')}
-                  <ArrowRight size={18} />
+                  <ArrowLeft size={18} />
+                  {t('wizard.back')}
                 </button>
-              ) : (
-                <div />
-              )}
-            </div>
 
-          </div>
+                {step < 10 ? (
+                  <button
+                    type="button"
+                    onClick={() => handleNextClick(Math.min(10, step + 1))}
+                    className="flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-xl font-medium hover:bg-indigo-700 transition-colors shadow-md shadow-indigo-600/10 dark:shadow-none cursor-pointer"
+                  >
+                    {t('wizard.next')}
+                    <ArrowRight size={18} />
+                  </button>
+                ) : (
+                  <div />
+                )}
+              </div>
+
+            </div>
+          </form>
         </main>
       </div>
 
       {showWarningModal && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in">
-          <div className="bg-white dark:bg-slate-800 rounded-3xl p-8 max-w-md w-full shadow-2xl border border-red-100 dark:border-red-900/50 animate-in zoom-in-95">
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in" role="presentation">
+          <div ref={warningDialogRef} className="bg-white dark:bg-slate-800 rounded-3xl p-8 max-w-md w-full shadow-2xl border border-red-100 dark:border-red-900/50 animate-in zoom-in-95" role="dialog" aria-modal="true" aria-labelledby="wizard-warning-title" tabIndex={-1}>
             <div className="flex flex-col items-center text-center">
               <div className="w-16 h-16 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-full flex items-center justify-center mb-6">
                 <AlertTriangle size={32} />
               </div>
-              <h3 className="text-xl font-semibold text-slate-900 dark:text-slate-100 mb-3">{t('wizard.warningTitle')}</h3>
+              <h3 id="wizard-warning-title" className="text-xl font-semibold text-slate-900 dark:text-slate-100 mb-3">{t('wizard.warningTitle')}</h3>
               <p className="text-slate-600 dark:text-slate-400 mb-8 leading-relaxed">
                 {t('wizard.warningDesc')}
               </p>
               <div className="flex flex-col w-full gap-3">
-                <button onClick={() => setShowWarningModal(false)} className="w-full py-3.5 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 font-medium rounded-xl hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors cursor-pointer">
+                <button type="button" onClick={() => setShowWarningModal(false)} className="w-full py-3.5 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 font-medium rounded-xl hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors cursor-pointer">
                   {t('wizard.checkInputs')}
                 </button>
-                <button onClick={() => { setShowWarningModal(false); setStep(nextStepTarget); }} className="w-full py-3.5 text-slate-500 dark:text-slate-400 font-medium hover:text-slate-700 dark:hover:text-slate-200 transition-colors cursor-pointer">
+                <button type="button" onClick={() => { setShowWarningModal(false); setStep(nextStepTarget); }} className="w-full py-3.5 text-slate-500 dark:text-slate-400 font-medium hover:text-slate-700 dark:hover:text-slate-200 transition-colors cursor-pointer">
                   {t('wizard.continueAnyway')}
                 </button>
               </div>

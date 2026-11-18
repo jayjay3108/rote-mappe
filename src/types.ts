@@ -94,6 +94,39 @@ export interface CustomChapter {
   content: string;
 }
 
+export interface Vehicle {
+  id: string;
+  type: string;
+  licensePlate: string;
+  insurance: string;
+  financing: string;
+  documentLocation: string;
+}
+
+export interface Pet {
+  id: string;
+  name: string;
+  species: string;
+  caregiver: string;
+  vetInfo: string;
+  chipId: string;
+  notes: string;
+}
+
+export interface Subscription {
+  id: string;
+  provider: string;
+  customerNumber: string;
+  cancellationNotice: string;
+}
+
+export interface ServiceProvider {
+  id: string;
+  role: string;
+  name: string;
+  contact: string;
+}
+
 export interface FormData {
   documentTitle?: string;
   // Basisdaten
@@ -117,6 +150,20 @@ export interface FormData {
 
   // Kontakte
   contacts: Contact[];
+  doNotNotifyContacts: Contact[];
+
+  // Arbeit
+  employment?: {
+    status: 'Angestellter' | 'Selbstständiger' | '';
+    companyName: string;
+    street: string;
+    zipCode: string;
+    city: string;
+    position: string;
+    employeeId: string;
+    workEmail: string;
+    emergencyContacts: Contact[];
+  };
 
   digitalIdentities: DigitalIdentityEntry[];
   devicePINs?: string;
@@ -151,6 +198,14 @@ export interface FormData {
     conditions: string;
     medications: string;
     allergies: string;
+    doctors: {
+      id: string;
+      type: string;
+      name: string;
+      phone: string;
+      website: string;
+      address: string;
+    }[];
   };
   otherAssets: OtherAsset[];
   realEstates: RealEstate[];
@@ -162,6 +217,16 @@ export interface FormData {
   documentNotes?: string;
   poaNotes?: string;
   customChapters: CustomChapter[];
+
+  // Neu
+  vehicles: Vehicle[];
+  automotiveClubs?: string;
+  pets: Pet[];
+  subscriptions: Subscription[];
+  digitalLegacySocialMedia?: string;
+  digitalLegacyCloud?: string;
+  serviceProviders: ServiceProvider[];
+  meterNumbers?: string;
 }
 
 export const initialFormData: FormData = {
@@ -181,30 +246,67 @@ export const initialFormData: FormData = {
   children: [],
   bankAccounts: [],
   contacts: [],
+  doNotNotifyContacts: [],
+  employment: {
+    status: '',
+    companyName: '',
+    street: '',
+    zipCode: '',
+    city: '',
+    position: '',
+    employeeId: '',
+    workEmail: '',
+    emergencyContacts: []
+  },
   financeNotes: '',
   digitalIdentities: [],
+  devicePINs: '',
   idCard: { id: 'idcard', name: 'Personalausweis', documentAction: 'placeholder', fileData: null, fileType: null },
   passport: { id: 'passport', name: 'Reisepass', documentAction: 'placeholder', fileData: null, fileType: null },
   driversLicense: { id: 'driverslicense', name: 'Führerschein', documentAction: 'placeholder', fileData: null, fileType: null },
+  birthCertificate: undefined,
+  marriageCertificate: undefined,
+  divorceCertificate: undefined,
   organDonorDocument: { id: 'organdonor', name: 'Organspendeausweis', documentAction: 'placeholder', fileData: null, fileType: null },
+  patientenverfuegung: undefined,
+  vorsorgevollmacht: undefined,
+  betreuungsverfuegung: undefined,
+  bestattungsverfuegung: undefined,
+  testamentDocument: undefined,
   certificates: [],
   keys: [],
   customPowersOfAttorney: [],
   otherDocuments: [],
+  birthDate: '',
+  birthPlace: '',
+  birthCountry: '',
+  taxId: '',
+  socialSecurityNumber: '',
   medicalData: {
     bloodType: '',
     organDonor: false,
     explicitOrganDonationContradiction: false,
     conditions: '',
     medications: '',
-    allergies: ''
+    allergies: '',
+    doctors: []
   },
   otherAssets: [],
   realEstates: [],
   contracts: [],
+  testamentLocation: '',
+  generalNotes: '',
   medicalNotes: '',
   documentNotes: '',
   poaNotes: '',
   contractNotes: '',
   customChapters: [],
+  vehicles: [],
+  automotiveClubs: '',
+  pets: [],
+  subscriptions: [],
+  digitalLegacySocialMedia: '',
+  digitalLegacyCloud: '',
+  serviceProviders: [],
+  meterNumbers: '',
 };

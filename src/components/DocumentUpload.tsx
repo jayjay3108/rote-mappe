@@ -15,6 +15,12 @@ export function DocumentUpload({ document, onChange, onRemove, isCustom }: Docum
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    const allowedTypes = new Set(['image/png', 'image/jpeg', 'application/pdf']);
+    const maxFileSize = 10 * 1024 * 1024;
+    if (!allowedTypes.has(file.type) || file.size > maxFileSize) {
+      e.target.value = '';
+      return;
+    }
 
     const reader = new FileReader();
     reader.onload = (event) => {
@@ -24,16 +30,22 @@ export function DocumentUpload({ document, onChange, onRemove, isCustom }: Docum
         fileType: file.type
       });
     };
+    reader.onerror = () => {
+      e.target.value = '';
+    };
     reader.readAsDataURL(file);
+    e.target.value = '';
   };
 
   return (
     <div className="p-5 border border-slate-300 dark:border-slate-700 rounded-2xl bg-white dark:bg-slate-800 shadow-md relative group">
       {onRemove && (
         <button
+          type="button"
           onClick={onRemove}
           className="absolute top-4 right-4 text-slate-400 hover:text-red-600 dark:hover:text-red-500 transition-colors cursor-pointer"
           title={t('docUpload.remove')}
+          aria-label={t('docUpload.remove', 'Entfernen')}
         >
           <Trash2 size={20} />
         </button>
@@ -42,6 +54,8 @@ export function DocumentUpload({ document, onChange, onRemove, isCustom }: Docum
       {isCustom ? (
         <input
           type="text"
+          id={`custom-doc-title-${document.id}`}
+          aria-label={t('docUpload.customNamePlaceholder')}
           value={document.name}
           onChange={(e) => onChange({ ...document, name: e.target.value })}
           placeholder={t('docUpload.customNamePlaceholder')}
@@ -51,12 +65,13 @@ export function DocumentUpload({ document, onChange, onRemove, isCustom }: Docum
       )}
 
       <div className="space-y-4">
-        <div>
-          <label className="block text-sm font-semibold text-slate-800 dark:text-slate-200 mb-2.5">{t('docUpload.whatToDo')}</label>
+        <fieldset>
+          <legend className="block text-sm font-semibold text-slate-800 dark:text-slate-200 mb-2.5">{t('docUpload.whatToDo')}</legend>
           <div className="flex flex-col gap-2.5">
-            <label className="flex items-center gap-3 cursor-pointer">
+            <label htmlFor={`doc-action-${document.id}-upload`} className="flex items-center gap-3 cursor-pointer">
               <input
                 type="radio"
+                id={`doc-action-${document.id}-upload`}
                 name={`upload-${document.id}`}
                 checked={document.documentAction === 'upload'}
                 onChange={() => onChange({ ...document, documentAction: 'upload' })}
@@ -64,9 +79,10 @@ export function DocumentUpload({ document, onChange, onRemove, isCustom }: Docum
               />
               <span className="text-sm font-medium text-slate-800 dark:text-slate-200">{t('docUpload.actionUpload')}</span>
             </label>
-            <label className="flex items-center gap-3 cursor-pointer">
+            <label htmlFor={`doc-action-${document.id}-placeholder`} className="flex items-center gap-3 cursor-pointer">
               <input
                 type="radio"
+                id={`doc-action-${document.id}-placeholder`}
                 name={`upload-${document.id}`}
                 checked={document.documentAction === 'placeholder'}
                 onChange={() => onChange({ ...document, documentAction: 'placeholder', fileData: null, fileType: null })}
@@ -74,9 +90,10 @@ export function DocumentUpload({ document, onChange, onRemove, isCustom }: Docum
               />
               <span className="text-sm font-medium text-slate-800 dark:text-slate-200">{t('docUpload.actionPlaceholder')}</span>
             </label>
-            <label className="flex items-center gap-3 cursor-pointer">
+            <label htmlFor={`doc-action-${document.id}-skip`} className="flex items-center gap-3 cursor-pointer">
               <input
                 type="radio"
+                id={`doc-action-${document.id}-skip`}
                 name={`upload-${document.id}`}
                 checked={document.documentAction === 'skip'}
                 onChange={() => onChange({ ...document, documentAction: 'skip', fileData: null, fileType: null })}
@@ -85,16 +102,17 @@ export function DocumentUpload({ document, onChange, onRemove, isCustom }: Docum
               <span className="text-sm font-medium text-slate-800 dark:text-slate-200">{t('docUpload.actionSkip')}</span>
             </label>
           </div>
-        </div>
+        </fieldset>
 
         {document.documentAction === 'upload' && (
           <div className="mt-4">
-            <label className="flex items-center justify-center w-full px-4 py-6 border-2 border-dashed border-slate-400 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-slate-700 hover:border-indigo-600 dark:hover:border-indigo-500 shadow-sm transition-all cursor-pointer group/upload">
+            <label htmlFor={`file-upload-${document.id}`} className="flex items-center justify-center w-full px-4 py-6 border-2 border-dashed border-slate-400 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-slate-700 hover:border-indigo-600 dark:hover:border-indigo-500 shadow-sm transition-all cursor-pointer group/upload">
               <div className="flex flex-col items-center gap-2 text-slate-600 dark:text-slate-400 group-hover/upload:text-indigo-700 dark:group-hover/upload:text-indigo-400">
                 <Upload size={24} />
                 <span className="text-sm font-semibold">{t('docUpload.selectFile')}</span>
               </div>
               <input
+                id={`file-upload-${document.id}`}
                 type="file"
                 accept="image/png, image/jpeg, application/pdf"
                 className="hidden"
@@ -105,6 +123,7 @@ export function DocumentUpload({ document, onChange, onRemove, isCustom }: Docum
               <div className="mt-3 flex items-center justify-between bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 px-4 py-2 rounded-lg text-sm border dark:border-indigo-800/50">
                 <span>{t('docUpload.success')}</span>
                 <button
+                  type="button"
                   onClick={() => onChange({ ...document, fileData: null, fileType: null })}
                   className="text-indigo-700 dark:text-indigo-300 hover:text-indigo-900 dark:hover:text-indigo-100 underline cursor-pointer"
                 >

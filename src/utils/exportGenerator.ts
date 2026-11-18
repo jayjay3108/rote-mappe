@@ -2,6 +2,7 @@ import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { generatePDFAsync } from './pdfWorkerWrapper';
 import { FormData, ScannedDocument } from '../types';
+import { serializeBackup } from './backupFormat';
 
 const addFileToZip = (zip: JSZip, folderName: string, doc: ScannedDocument | undefined | null) => {
   if (doc && doc.documentAction === 'upload' && doc.fileData) {
@@ -28,7 +29,7 @@ const addFileToZip = (zip: JSZip, folderName: string, doc: ScannedDocument | und
   }
 };
 
-export const generateAndDownloadZip = async (data: FormData, templateName: string = 'default', includePlaceholders: boolean = true, includeWarnings: boolean = true) => {
+export const generateZipBlob = async (data: FormData, templateName: string = 'default', includePlaceholders: boolean = true, includeWarnings: boolean = true, password?: string): Promise<Blob> => {
   const zip = new JSZip();
 
   // 1. PDF-Datei generieren und ins Hauptverzeichnis legen
@@ -50,7 +51,7 @@ export const generateAndDownloadZip = async (data: FormData, templateName: strin
     { 
       folder: 'Vollmachten_Verfuegungen', 
       docs: [
-        data.patientenverfuegung, data.vorsorgevollmacht, data.betreuungsverfuegung,
+        data.patientenverfuegung, data.vorsorgevollmacht, data.betreuungsverfuegung, data.bestattungsverfuegung,
         data.testamentDocument, ...(data.customPowersOfAttorney || [])
       ]
     }
@@ -61,11 +62,21 @@ export const generateAndDownloadZip = async (data: FormData, templateName: strin
   });
 
   // 3. JSON-Backup-Datei für den späteren Import hinzufügen
-  const backupJson = JSON.stringify(data, null, 2);
-  zip.file('Notfallakte_Backup.json', backupJson);
+  const backupJson = serializeBackup(data);
+  
+  if (password) {
+    const { encryptBackup } = await import('./crypto');
+    const encryptedData = await encryptBackup(backupJson, password);
+    zip.file('Notfallakte_Backup.enc', encryptedData);
+  } else {
+    zip.file('Notfallakte_Backup.json', backupJson);
+  }
 
-  // 4. ZIP-Datei erstellen und Download auslösen
-  const zipBlob = await zip.generateAsync({ type: 'blob' });
+  return zip.generateAsync({ type: 'blob' });
+};
+
+export const generateAndDownloadZip = async (data: FormData, templateName: string = 'default', includePlaceholders: boolean = true, includeWarnings: boolean = true, password?: string) => {
+  const zipBlob = await generateZipBlob(data, templateName, includePlaceholders, includeWarnings, password);
   const dateStr = new Date().toISOString().slice(0, 10);
   const lastName = data.lastName || 'Nachname';
   

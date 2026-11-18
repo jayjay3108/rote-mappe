@@ -1,8 +1,15 @@
 import { useState, useEffect } from 'react';
-import { ShieldCheck, FileText, Download, Lock, Upload, Globe } from 'lucide-react';
+import { ShieldCheck, FileText, Download, Lock, Upload, Globe, KeyRound } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { ThemeToggle } from './ThemeToggle';
 import { version } from '../../package.json';
+import JSZip from 'jszip';
+import { ToastContainer } from './Toast';
+import { useToast } from '../hooks/useToast';
+import { formSchema } from '../schema';
+import { migrateData } from '../utils/migrateData';
+import { BackupFormatError } from '../utils/backupFormat';
+import { useDialogFocusTrap } from '../hooks/useDialogFocusTrap';
 
 interface BeforeInstallPromptEvent extends Event {
   readonly platforms: string[];
@@ -17,9 +24,18 @@ interface WelcomeProps {
   onStart: () => void;
 }
 
+const MAX_BACKUP_SIZE = 25 * 1024 * 1024;
+const MAX_ZIP_ENTRIES = 100;
+
 export function Welcome({ onStart }: WelcomeProps) {
   const { t, i18n } = useTranslation();
+  const { toasts, addToast, dismissToast } = useToast();
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const passwordDialogRef = useDialogFocusTrap(showPasswordModal);
 
   useEffect(() => {
     const handleBeforeInstallPrompt = (e: Event) => {
@@ -34,6 +50,22 @@ export function Welcome({ onStart }: WelcomeProps) {
     };
   }, []);
 
+  useEffect(() => {
+    if (!showPasswordModal) return;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setShowPasswordModal(false);
+        setPendingFile(null);
+      }
+    };
+    window.addEventListener('keydown', handleEscape);
+    return () => {
+      window.removeEventListener('keydown', handleEscape);
+      previouslyFocused?.focus();
+    };
+  }, [showPasswordModal]);
+
   const handleInstallClick = async () => {
     if (!deferredPrompt) return;
     deferredPrompt.prompt();
@@ -43,25 +75,118 @@ export function Welcome({ onStart }: WelcomeProps) {
     }
   };
 
-  const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (file.size > MAX_BACKUP_SIZE) {
+      addToast(t('welcome.backupError', { defaultValue: 'Die Backup-Datei ist zu groß.' }));
+      e.target.value = '';
+      return;
+    }
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
+    if (file.name.endsWith('.zip')) {
       try {
-        const data = JSON.parse(event.target?.result as string);
-        sessionStorage.setItem('notfallakte_data', JSON.stringify(data));
-        onStart();
+        const zip = new JSZip();
+        const loadedZip = await zip.loadAsync(file);
+        if (Object.keys(loadedZip.files).length > MAX_ZIP_ENTRIES) {
+          throw new Error('Das ZIP-Archiv enthält zu viele Dateien.');
+        }
+        const encFile = loadedZip.file('Notfallakte_Backup.enc');
+        const jsonFile = loadedZip.file('Notfallakte_Backup.json');
+
+        if (encFile) {
+          const content = await encFile.async('text');
+          const mockFile = new File([content], 'Notfallakte_Backup.enc', { type: 'text/plain' });
+          setPendingFile(mockFile);
+          setPassword('');
+          setError('');
+          setShowPasswordModal(true);
+          e.target.value = '';
+          return;
+        } else if (jsonFile) {
+          const content = await jsonFile.async('text');
+          const mockFile = new File([content], 'Notfallakte_Backup.json', { type: 'application/json' });
+          await processFile(mockFile);
+          e.target.value = '';
+          return;
+        } else {
+          addToast(t('welcome.backupError', { defaultValue: 'Kein Backup in der ZIP-Datei gefunden.' }));
+        }
       } catch {
-        alert(t('welcome.backupError'));
+        addToast(t('welcome.backupError', { defaultValue: 'Fehler beim Lesen der ZIP-Datei.' }));
+      }
+      e.target.value = '';
+      return;
+    }
+
+    const isEncrypted = file.name.endsWith('.enc');
+    if (isEncrypted) {
+      setPendingFile(file);
+      setPassword('');
+      setError('');
+      setShowPasswordModal(true);
+      e.target.value = ''; // reset file input
+      return;
+    }
+
+    await processFile(file);
+    e.target.value = ''; // reset file input
+  };
+
+  const processFile = async (file: File, password?: string) => {
+    if (file.size > MAX_BACKUP_SIZE) {
+      addToast(t('welcome.backupError', { defaultValue: 'Die Backup-Datei ist zu groß.' }));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onerror = () => {
+      addToast(t('welcome.backupError', { defaultValue: 'Fehler beim Lesen des Backups.' }));
+    };
+    reader.onload = async (event) => {
+      try {
+        let rawData = event.target?.result as string;
+        if (password) {
+          const { decryptBackup } = await import('../utils/crypto');
+          rawData = await decryptBackup(rawData, password);
+        }
+        const parsedData = JSON.parse(rawData);
+        const result = formSchema.safeParse(migrateData(parsedData));
+        if (!result.success) {
+          throw new Error('Das Backup enthält keine gültigen Formulardaten.');
+        }
+        try {
+          sessionStorage.setItem('notfallakte_data', JSON.stringify(result.data));
+        } catch {
+          addToast(t('welcome.storageError', { defaultValue: 'Das Backup ist gültig, konnte aber nicht lokal gespeichert werden.' }));
+          return;
+        }
+        onStart();
+      } catch (error) {
+        const message = error instanceof BackupFormatError && error.code === 'unsupported'
+          ? t('welcome.unsupportedBackup', { defaultValue: 'Diese Backup-Version wird von dieser App nicht unterstützt.' })
+          : t('welcome.backupError', { defaultValue: 'Fehler beim Laden des Backups. Bitte prüfe das Passwort.' });
+        addToast(message);
       }
     };
     reader.readAsText(file);
   };
 
+  const handlePasswordConfirm = async () => {
+    if (!password) {
+      setError(t('welcome.enterPassword', { defaultValue: 'Bitte gib das Passwort ein.' }));
+      return;
+    }
+    setShowPasswordModal(false);
+    if (pendingFile) {
+      await processFile(pendingFile, password);
+      setPendingFile(null);
+    }
+  };
+
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex flex-col items-center justify-center p-6 text-slate-800 dark:text-slate-200 relative">
+    <>
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex flex-col items-center justify-center p-6 text-slate-800 dark:text-slate-200 relative">
       <div className="max-w-4xl w-full bg-white dark:bg-slate-800 rounded-3xl shadow-xl overflow-hidden flex flex-col md:flex-row border border-slate-200 dark:border-slate-700">
 
         {/* Left Side: Illustration / Mood */}
@@ -86,12 +211,14 @@ export function Welcome({ onStart }: WelcomeProps) {
             <div className="flex items-center gap-2 bg-white/50 dark:bg-slate-800/50 border border-slate-200/60 dark:border-slate-700/60 py-1.5 px-3 rounded-lg w-fit mx-auto">
               <Globe size={14} className="text-indigo-400 dark:text-indigo-300" />
               <button
+                type="button"
                 onClick={() => i18n.changeLanguage('de')}
                 className={`text-xs font-medium px-2 py-1 rounded transition-colors cursor-pointer ${i18n.language === 'de' || !i18n.language || i18n.language.startsWith('de') ? 'bg-indigo-600 text-white shadow-sm' : 'text-indigo-700 dark:text-indigo-300 hover:bg-white/60 dark:hover:bg-slate-700/60'}`}
               >
                 DE
               </button>
               <button
+                type="button"
                 onClick={() => i18n.changeLanguage('en')}
                 className={`text-xs font-medium px-2 py-1 rounded transition-colors cursor-pointer ${i18n.language === 'en' || i18n.language.startsWith('en') ? 'bg-indigo-600 text-white shadow-sm' : 'text-indigo-700 dark:text-indigo-300 hover:bg-white/60 dark:hover:bg-slate-700/60'}`}
               >
@@ -145,6 +272,7 @@ export function Welcome({ onStart }: WelcomeProps) {
           </div>
 
           <button
+            type="button"
             onClick={onStart}
             className="group w-full bg-indigo-600 text-white py-4 px-6 rounded-2xl font-medium text-lg shadow-lg shadow-indigo-600/20 hover:bg-indigo-700 hover:shadow-xl hover:-translate-y-0.5 transition-all duration-300 flex items-center justify-center gap-2 cursor-pointer"
           >
@@ -159,7 +287,7 @@ export function Welcome({ onStart }: WelcomeProps) {
             {t('welcome.loadBackup')}
             <input
               type="file"
-              accept=".json"
+              accept=".json, .enc, .zip"
               className="hidden"
               onChange={handleImport}
             />
@@ -167,6 +295,7 @@ export function Welcome({ onStart }: WelcomeProps) {
 
           {deferredPrompt && (
             <button
+              type="button"
               onClick={handleInstallClick}
               className="mt-4 w-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 py-4 px-6 rounded-2xl font-medium text-lg border-2 border-transparent hover:border-slate-300 dark:hover:border-slate-600 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all duration-300 flex items-center justify-center gap-2 cursor-pointer"
             >
@@ -191,6 +320,49 @@ export function Welcome({ onStart }: WelcomeProps) {
           v{version}
         </a>
       </div>
+
+      {showPasswordModal && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in" role="presentation">
+          <div ref={passwordDialogRef} className="bg-white dark:bg-slate-800 rounded-3xl p-8 max-w-md w-full shadow-2xl border border-indigo-100 dark:border-indigo-900/50 animate-in zoom-in-95" role="dialog" aria-modal="true" aria-labelledby="welcome-decrypt-title" tabIndex={-1}>
+            <div className="flex flex-col items-center text-center">
+              <div className="w-16 h-16 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-full flex items-center justify-center mb-6">
+                <KeyRound size={32} />
+              </div>
+              <h3 id="welcome-decrypt-title" className="text-xl font-semibold text-slate-900 dark:text-slate-100 mb-3">{t('welcome.decryptTitle', { defaultValue: 'Backup entschlüsseln' })}</h3>
+              <p className="text-slate-600 dark:text-slate-400 mb-6 leading-relaxed">
+                {t('welcome.enterPasswordDesc', { defaultValue: 'Dieses Backup ist verschlüsselt. Bitte gib das Passwort ein, um die Daten zu laden.' })}
+              </p>
+
+              <div className="flex flex-col w-full gap-4">
+                <div>
+                  <label htmlFor="welcome-backup-password" className="sr-only">{t('welcome.passwordLabel', { defaultValue: 'Passwort' })}</label>
+                  <input
+                    type="password"
+                    id="welcome-backup-password"
+                    placeholder={t('welcome.passwordLabel', { defaultValue: 'Passwort' })}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full px-4 py-3 border border-slate-200 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-900/50 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                    autoFocus
+                    onKeyDown={(e) => e.key === 'Enter' && handlePasswordConfirm()}
+                  />
+                  {error && <p id="welcome-password-error" role="alert" className="text-red-500 text-sm text-left mt-2">{error}</p>}
+                </div>
+                
+                <div className="flex flex-col w-full gap-2 mt-2">
+                  <button type="button" onClick={() => handlePasswordConfirm()} className="w-full py-3.5 bg-indigo-600 text-white font-medium rounded-xl hover:bg-indigo-700 shadow-md shadow-indigo-600/20 transition-all cursor-pointer">
+                    {t('welcome.decryptBtn', { defaultValue: 'Entschlüsseln' })}
+                  </button>
+                  <button type="button" onClick={() => { setShowPasswordModal(false); setPendingFile(null); }} className="w-full py-2 text-sm text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 transition-colors cursor-pointer">
+                    {t('common.cancel', { defaultValue: 'Abbrechen' })}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
+    </>
   );
 }

@@ -15,6 +15,7 @@ export const addDigitalSection = (builder: PdfBuilder) => {
         if (rows.length > 0) {
           builder.drawTable(headers, rows.splice(0, rows.length));
         }
+        builder.checkPageBreak(40);
         builder.currentY -= 5; 
         builder.drawLineText(entry.title || '', true, 12, builder.config.colors.text);
         builder.currentY -= 5;
@@ -24,6 +25,19 @@ export const addDigitalSection = (builder: PdfBuilder) => {
     });
     if (rows.length > 0) {
       builder.drawTable(headers, rows);
+    }
+  }
+
+  const hasLegacy = !!builder.data.digitalLegacySocialMedia || !!builder.data.digitalLegacyCloud;
+  if (hasLegacy) {
+    builder.drawLineText(i18n.t('wizardSteps.step5.legacyTitle'), true, 12);
+    if (builder.data.digitalLegacySocialMedia) {
+      builder.drawLineText(`${i18n.t('wizardSteps.step5.socialMedia')}: ${builder.data.digitalLegacySocialMedia}`, false, 11);
+      builder.currentY -= 5;
+    }
+    if (builder.data.digitalLegacyCloud) {
+      builder.drawLineText(`${i18n.t('wizardSteps.step5.cloud')}: ${builder.data.digitalLegacyCloud}`, false, 11);
+      builder.currentY -= 5;
     }
   }
   
